@@ -34,6 +34,12 @@ Monitor({
 ```
 
 ```bash
+# flock：同時只有一個 session 真的在輪詢。其餘的安靜卡在鎖上（kernel wait，
+# 不吃 CPU、不發事件），持鎖那個一關就立刻接手，沒有空窗。
+# 鎖綁在 fd 上，process 被 kill -9 或當機也會自動釋放，不會留 stale lock。
+exec 9>"${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
+flock 9
+
 last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 while true; do
   gh api "/notifications?since=$last&all=false&per_page=50" --jq \
@@ -45,8 +51,13 @@ while true; do
 done
 ```
 
-**只在一個 session arm。** 開著 N 個 session 各 arm 一次，就是同一則通知收到 N 遍。
-GitHub 的 `X-Poll-Interval` 下限是 60 秒，別調更短。
+arm 之前先建目錄：`mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell"`。
+
+上面的 `flock` 讓「只在一個 session arm」變成強制而不是建議——在幾個 session 裡
+arm 都無所謂，只有一個會真的輪詢。GitHub 的 `X-Poll-Interval` 下限是 60 秒，別調更短。
+
+**注意**：接手的可能是你三天前開著沒關的 session，通知會跑到你沒在看的視窗。
+真的困擾就 TaskStop 掉再在想要的 session 重 arm。
 
 ## 處理完要標已讀
 

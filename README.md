@@ -69,8 +69,12 @@ hook 只在開 session 時查一次。session 中途要重查、或要掛即時�
 
 ```
 /doorbell           列出當下誰在等你
-/doorbell watch     掛一個 Monitor 持續輪詢（只在一個 session 掛）
+/doorbell watch     掛一個 Monitor 持續輪詢
 ```
+
+`watch` 的輪詢迴圈用 `flock` 保護，在幾個 session 裡 arm 都無所謂——同時只有一個
+會真的打 API，其餘安靜等在鎖上，持鎖那個一關就立刻接手。所以不會有「兩個 session
+都提示我同一則 mention」的問題。
 
 skill 裡也寫了標已讀和認領任務的正確做法（含多人同時認領的 read-back）。
 
