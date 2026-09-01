@@ -52,6 +52,17 @@ gh auth status
 `gh` 裝在非標準路徑（asdf/mise shim 之類）的話，doorbell 已經預先把
 `~/.local/bin`、`~/bin`、`/opt/homebrew/bin` 加進 PATH；還是找不到就自己補。
 
+### 同一份清單只講一次
+
+開第二、第三個 session 不會再重複同一份清單。doorbell 記住上次講過的內容雜湊，
+只有清單真的變了（有新的進來、或你標了已讀）才再響。
+
+用內容雜湊而不是「N 分鐘內不重複」，是因為前者不需要調一個魔術數字，
+而且隔天早上打開時如果 backlog 沒變，本來也不需要再被提醒一次。
+
+狀態存在 `~/.local/state/doorbell/last-signature`（尊重 `XDG_STATE_HOME`）。
+想強制再看一次就刪掉它，或直接用 `/doorbell`——skill 是直接查，不受這個影響。
+
 ### `/doorbell` skill
 
 hook 只在開 session 時查一次。session 中途要重查、或要掛即時推播，用 skill：

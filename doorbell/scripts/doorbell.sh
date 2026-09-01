@@ -54,5 +54,16 @@ if ! out=$(GH api "/notifications?all=false&per_page=100" --paginate --jq \
   exit 0
 fi
 
-[ -n "$out" ] && emit "$(printf '有人在等你\n%s' "$out")"
+[ -n "$out" ] || exit 0
+
+# 同一份清單只講一次：第二個以後的 session 保持安靜，清單有變（新的來了、
+# 或你標了已讀）才再響。用內容雜湊而不是時間窗，免得要調一個魔術數字。
+# ponytail: 兩個 session 同時開有極小機率都讀到舊值而各響一次。加鎖不值得，
+#           最壞就是偶爾多看一遍。
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/last-signature"
+sig=$(printf '%s' "$out" | sha256sum | cut -d' ' -f1)
+[ -r "$STATE" ] && [ "$(cat "$STATE")" = "$sig" ] && exit 0
+mkdir -p "${STATE%/*}" && printf '%s' "$sig" > "$STATE"
+
+emit "$(printf '有人在等你\n%s' "$out")"
 exit 0
