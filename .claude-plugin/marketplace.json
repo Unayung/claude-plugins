@@ -5,7 +5,7 @@
     {
       "name": "doorbell",
       "source": "./doorbell",
-      "description": "開 session 時告訴你誰在等你 — GitHub 收件匣，濾掉 CI 噪音"
+      "description": "誰在等你 — GitHub 收件匣，濾掉 CI 噪音。/doorbell 呼叫才作動"
     }
   ]
 }

@@ -1,19 +1,16 @@
 ---
 name: doorbell
-description: 查看或持續監看誰在等你 —— GitHub 上 request review / assign / mention / 你自己 PR 的新回覆。用在使用者說「誰在等我」「有什麼要 review」「盯著收件匣」「/doorbell」時。預設列出當下清單；watch 開啟即時輪詢並記住設定；unwatch 關掉。
+description: 查看或持續監看誰在等你 —— GitHub 上 request review / assign / mention / 你自己 PR 的新回覆。用在使用者說「誰在等我」「有什麼要 review」「盯著收件匣」「/doorbell」時。預設列出當下清單；watch 在這個 session 掛上即時輪詢；unwatch 關掉。
 ---
 
 # doorbell
 
-doorbell 的 SessionStart hook **預設完全不作動**。要開啟得 opt in，開一次就記住。
-
-狀態目錄：`${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/`
-- `watch-enabled` — 旗標檔。存在 = hook 會作動並要求掛輪詢（內容不讀）
-- `last-signature` — 上次講過的清單雜湊，用來避免多個 session 重複提示
+doorbell **只在被呼叫的 session 作動**，不留任何跨 session 狀態：沒有 hook、
+沒有旗標檔，也不會自己在新 session 掛回來。要監看就在那個 session 打 `/doorbell watch`。
 
 ## 預設：現在列出來
 
-不管旗標開沒開，明確呼叫一律直接查並回答。
+明確呼叫一律直接查並回答。
 
 ```bash
 gh api "/notifications?all=false&per_page=100" --paginate --jq \
@@ -26,19 +23,17 @@ gh api "/notifications?all=false&per_page=100" --paginate --jq \
 
 清單空的就直接說沒有，不要編。
 
-## `watch`：開啟即時輪詢（會記住）
+## `watch`：在這個 session 掛上即時輪詢
 
-```bash
-mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell"
-touch "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/watch-enabled"
-```
+只影響當下這個 session。關掉視窗、session 結束，輪詢就跟著沒了——
+下次要監看再打一次 `/doorbell watch`。
 
 **間隔固定 60 秒，不要做成可調。** 2026-09-01 實測 `/notifications` 回應標頭：
 `Cache-Control: private, max-age=60`（資料宣告 60 秒內 fresh）、`X-Poll-Interval: 60`、
 且 `gh api` 不送 conditional request 所以每次實扣額度。調更短只會拿到同一份快取、
 延遲不變、額度多花數倍。使用者要求調快就把這段講給他聽。
 
-然後**立刻**用 Monitor 工具掛上（不要只寫旗標就結束，這個 session 也要生效）：
+用 Monitor 工具掛上：
 
 ```
 Monitor({
@@ -72,8 +67,15 @@ while true; do
       | jq -r ".[]|select(.reason|IN(${REASONS}[]))
                |\"🔔 [\(.reason)] \(.repository.full_name) — \(.subject.title)\""
     # 只有成功才推進 since。失敗就保留原值，下一輪重查同一個區間，不會漏。
-    d=$(grep -im1 '^date:' "$resp" | sed 's/^[Dd]ate:[[:space:]]*//' | tr -d '\r')
-    [ -n "$d" ] && since=$(date -u -d "$d - 1 second" +%Y-%m-%dT%H:%M:%SZ)
+    # 用 sed 不用 grep：某些環境的 grep 對 -im1 這種合併短選項會炸
+    # （實測 "unknown option '-G'"），而且是靜默的——d 變空、since 永遠不前進。
+    d=$(sed -n 's/^[Dd]ate: *//p' "$resp" | head -1 | tr -d '\r')
+    if [ -n "$d" ]; then
+      since=$(date -u -d "$d - 1 second" +%Y-%m-%dT%H:%M:%SZ)
+    else
+      # 抽不到就要吵。靜默不前進 = 每輪重掃同一區間，看起來一切正常但其實壞了。
+      echo "⚠️ doorbell: 取不到回應的 Date 標頭，since 未前進（仍為 $since）"
+    fi
   else
     echo "⚠️ doorbell: gh notifications 失敗，保留 since=$since 下輪重查"
   fi
@@ -88,17 +90,9 @@ done
 **注意**：接手的可能是使用者三天前開著沒關的 session，通知會跑到他沒在看的視窗。
 真的困擾就 TaskStop 掉再在想要的 session 重 arm。
 
-之後每個新 session 的 hook 會看到旗標，在 `additionalContext` 裡告訴你間隔幾秒、
-要求把輪詢掛回來——所以使用者只需要 opt in 一次，間隔也會沿用。
-
 ## `unwatch` / `stop`：關掉
 
-```bash
-rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/watch-enabled"
-```
-
-同時用 TaskStop 停掉這個 session 正在跑的 doorbell Monitor（如果有）。
-之後的 session 就完全不作動。
+用 TaskStop 停掉這個 session 的 doorbell Monitor。沒有別的狀態要清。
 
 ## 處理完要標已讀
 
