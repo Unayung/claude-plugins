@@ -34,13 +34,18 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 連 PATH 都不碰）。
 
 ```
-/doorbell           列出當下誰在等你（隨時可用，不受開關影響）
-/doorbell watch     開啟。會記住，之後每個新 session 自動生效
-/doorbell unwatch   關掉，回到完全不作動
+/doorbell             列出當下誰在等你（隨時可用，不受開關影響）
+/doorbell watch       開啟即時輪詢，60 秒一次
+/doorbell watch 15    改成 15 秒一次
+/doorbell unwatch     關掉，回到完全不作動
 ```
 
 `watch` 開一次就好。之後每個新 session 的 SessionStart hook 會看到旗標，
-自動把即時輪詢掛回來，不用重打。
+自動把即時輪詢掛回來，間隔也沿用，不用重打。
+
+間隔存在旗標檔內容裡，不是正整數就當 60。**低於 60 秒是超出 GitHub 建議值的用法**——
+`/notifications` 的 `X-Poll-Interval` 下限就是 60 秒。實務上 conditional request 回 304
+不計 rate limit 所以通常沒事，但被限流別意外。
 
 ## 需求
 
@@ -85,7 +90,7 @@ backlog 沒變本來也不該再提醒一次。
 
 | 檔案 | 用途 |
 |---|---|
-| `watch-enabled` | 開關旗標。不存在 = 完全不作動 |
+| `watch-enabled` | 開關旗標。不存在 = 完全不作動；內容 = 輪詢秒數 |
 | `last-signature` | 上次講過的清單雜湊。刪掉可強制再看一次 |
 | `poller.lock` | flock 用 |
 
