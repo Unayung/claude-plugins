@@ -30,7 +30,27 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 
 ### 需求
 
-`gh` 已安裝並登入（`gh auth status`）。沒有的話 doorbell 安靜跳過，不會擋你開 session。
+`gh`（GitHub CLI）與 `jq`，且 `gh` 已登入。
+
+```bash
+# 安裝 gh
+brew install gh              # macOS
+sudo pacman -S github-cli    # Arch
+sudo apt install gh          # Debian/Ubuntu
+# 其他平台：https://cli.github.com
+
+# 登入
+gh auth login
+
+# 確認
+gh auth status
+```
+
+缺任何一項，doorbell **會在開 session 時明講缺什麼、該跑哪個指令**，不會安靜跳過，
+也不會擋住你開 session（所有 gh 呼叫都有硬性 timeout，最壞 13 秒）。
+
+`gh` 裝在非標準路徑（asdf/mise shim 之類）的話，doorbell 已經預先把
+`~/.local/bin`、`~/bin`、`/opt/homebrew/bin` 加進 PATH；還是找不到就自己補。
 
 ### `/doorbell` skill
 
