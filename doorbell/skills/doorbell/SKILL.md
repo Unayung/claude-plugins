@@ -40,9 +40,18 @@ echo "$N" > "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/watch-enabled"
 
 參數不是正整數（打錯字、負數、0）就別寫進去，直接跟使用者說一聲並用 60。
 
-**低於 60 秒要提醒一次**：GitHub 的 `X-Poll-Interval` 對 `/notifications` 的建議下限
-就是 60 秒。實務上 conditional request 回 304 不計 rate limit，所以通常沒事，但這是
-超出官方建議值的用法，被限流不要意外。低於 10 秒就直接勸退。
+**低於 60 秒要提醒使用者「多半沒有用」**（2026-09-01 實測 `/notifications` 回應標頭）：
+
+```
+X-Poll-Interval: 60
+Cache-Control:   private, max-age=60, s-maxage=60   ← 資料宣告 60 秒內 fresh
+X-Ratelimit-Remaining 每次 -1                        ← gh api 不送 conditional request
+```
+
+所以 15 秒去打，最可能的結果是三次拿到同一份快取、延遲沒改善、額度花 4 倍
+（240 次/小時 vs 60 次/小時，上限 5000）。真正的延遲瓶頸在 GitHub 端產生通知那段。
+
+使用者堅持就照做，但要先講這件事。低於 10 秒直接勸退。
 
 然後**立刻**用 Monitor 工具掛上（不要只寫旗標就結束，這個 session 也要生效）：
 

@@ -43,9 +43,19 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 `watch` 開一次就好。之後每個新 session 的 SessionStart hook 會看到旗標，
 自動把即時輪詢掛回來，間隔也沿用，不用重打。
 
-間隔存在旗標檔內容裡，不是正整數就當 60。**低於 60 秒是超出 GitHub 建議值的用法**——
-`/notifications` 的 `X-Poll-Interval` 下限就是 60 秒。實務上 conditional request 回 304
-不計 rate limit 所以通常沒事，但被限流別意外。
+間隔存在旗標檔內容裡，不是正整數就當 60。
+
+**低於 60 秒多半沒有用。** 2026-09-01 實測 `/notifications` 的回應標頭：
+
+```
+X-Poll-Interval: 60
+Cache-Control:   private, max-age=60, s-maxage=60   ← 資料宣告 60 秒內 fresh
+X-Ratelimit-Remaining 每次 -1                        ← gh api 不送 conditional request
+```
+
+15 秒去打的結果是三次拿到同一份快取、延遲沒改善、額度花 4 倍（240 次/小時 vs 60，
+上限 5000）。真正的延遲瓶頸在 GitHub 端產生通知那段，不在輪詢間隔。參數留著給你調，
+但預設 60 是有根據的。
 
 ## 需求
 
