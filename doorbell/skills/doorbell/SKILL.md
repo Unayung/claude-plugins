@@ -55,16 +55,33 @@ Monitor({
 exec 9>"${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
 flock 9
 
-last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:$PATH"
+export GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
+REASONS='["review_requested","assign","mention","team_mention","author"]'
+
+# 下一輪的 since 用「回應的 Date 標頭」而不是本地 date。用本地時鐘有兩個漏洞：
+#   1. 空窗：API 回應產生後、本地取時間前落地的通知，下一輪的 since 會跳過它
+#   2. 時鐘偏移：本機比 GitHub 快的話，快多少就漏多少
+# 退 1 秒是因為 since 是嚴格大於；代價是邊界上偶爾重複一則，比漏掉好。
+since=$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)
+
 while true; do
-  gh api "/notifications?since=$last&all=false&per_page=50" --jq \
-    '.[]|select(.reason|IN("review_requested","assign","mention","team_mention","author"))
-      |"[\(.reason)] \(.repository.full_name) — \(.subject.title)"' \
-    || echo "⚠️ doorbell: gh notifications 失敗"
-  last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  resp=$(mktemp)
+  if timeout 30 gh api -i "/notifications?since=$since&all=false&per_page=50" > "$resp" 2>&1; then
+    awk 'f{print} /^\r?$/{f=1}' "$resp" \
+      | jq -r ".[]|select(.reason|IN(${REASONS}[]))
+               |\"🔔 [\(.reason)] \(.repository.full_name) — \(.subject.title)\""
+    # 只有成功才推進 since。失敗就保留原值，下一輪重查同一個區間，不會漏。
+    d=$(grep -im1 '^date:' "$resp" | sed 's/^[Dd]ate:[[:space:]]*//' | tr -d '\r')
+    [ -n "$d" ] && since=$(date -u -d "$d - 1 second" +%Y-%m-%dT%H:%M:%SZ)
+  else
+    echo "⚠️ doorbell: gh notifications 失敗，保留 since=$since 下輪重查"
+  fi
+  rm -f "$resp"
   sleep 60
 done
 ```
+
 
 在幾個 session arm 都無所謂，flock 保證只有一個真的打 API。
 
