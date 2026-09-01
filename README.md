@@ -34,18 +34,17 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 連 PATH 都不碰）。
 
 ```
-/doorbell             列出當下誰在等你（隨時可用，不受開關影響）
-/doorbell watch       開啟即時輪詢，60 秒一次
-/doorbell watch 15    改成 15 秒一次
-/doorbell unwatch     關掉，回到完全不作動
+/doorbell           列出當下誰在等你（隨時可用，不受開關影響）
+/doorbell watch     開啟即時輪詢，60 秒一次
+/doorbell unwatch   關掉，回到完全不作動
 ```
 
 `watch` 開一次就好。之後每個新 session 的 SessionStart hook 會看到旗標，
-自動把即時輪詢掛回來，間隔也沿用，不用重打。
+自動把即時輪詢掛回來，不用重打。
 
-間隔存在旗標檔內容裡，不是正整數就當 60。
+### 間隔為什麼固定 60 秒
 
-**低於 60 秒多半沒有用。** 2026-09-01 實測 `/notifications` 的回應標頭：
+曾經做成可調，量完之後拿掉了。2026-09-01 實測 `/notifications` 回應標頭：
 
 ```
 X-Poll-Interval: 60
@@ -53,9 +52,11 @@ Cache-Control:   private, max-age=60, s-maxage=60   ← 資料宣告 60 秒內 f
 X-Ratelimit-Remaining 每次 -1                        ← gh api 不送 conditional request
 ```
 
-15 秒去打的結果是三次拿到同一份快取、延遲沒改善、額度花 4 倍（240 次/小時 vs 60，
-上限 5000）。真正的延遲瓶頸在 GitHub 端產生通知那段，不在輪詢間隔。參數留著給你調，
-但預設 60 是有根據的。
+調成 15 秒的實際效果是三次拿到同一份快取、延遲沒改善、額度花 4 倍。真正的延遲
+瓶頸在 GitHub 端產生通知那段，不在輪詢間隔。一個量不出差別的旋鈕留著只會誤導人。
+
+真要更低延遲得換機制——GitHub webhook 是 push 的，沒有輪詢週期，但那需要一個
+GitHub 打得到的端點。60 秒輪詢就是不架 server 的代價。
 
 ## 需求
 
@@ -100,7 +101,7 @@ backlog 沒變本來也不該再提醒一次。
 
 | 檔案 | 用途 |
 |---|---|
-| `watch-enabled` | 開關旗標。不存在 = 完全不作動；內容 = 輪詢秒數 |
+| `watch-enabled` | 開關旗標。不存在 = 完全不作動（內容不讀） |
 | `last-signature` | 上次講過的清單雜湊。刪掉可強制再看一次 |
 | `poller.lock` | flock 用 |
 

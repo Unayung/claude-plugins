@@ -52,15 +52,10 @@ if ! out=$(GH api "/notifications?all=false&per_page=100" --paginate --jq \
   exit 0
 fi
 
-# 輪詢間隔存在旗標檔裡。內容不是正整數就退回 60，免得 `sleep abc` 空轉。
-INTERVAL=$(cat "$STATE_DIR/watch-enabled" 2>/dev/null | tr -dc '0-9')
-case "$INTERVAL" in ''|0) INTERVAL=60 ;; esac
-
 # 告訴模型把即時輪詢掛起來——這是 watch 能跨 session 持續的關鍵
-ARM_HINT="doorbell watch 已啟用，輪詢間隔 ${INTERVAL} 秒。請立刻用 Monitor 工具掛上
-（persistent: true，description \"doorbell：有人在等你\"），command 用 doorbell skill 裡
-\`watch\` 那段，sleep 改成 ${INTERVAL}（含 flock，多 session 同時掛也只有一個會真的打 API）。
-已經掛著就不要重複掛。"
+ARM_HINT='doorbell watch 已啟用。請立刻用 Monitor 工具掛上即時輪詢（persistent: true，
+description "doorbell：有人在等你"），command 用 doorbell skill 裡 `watch` 那段
+（含 flock，多 session 同時掛也只有一個會真的打 API）。已經掛著就不要重複掛。'
 
 # 同一份清單只講一次：第二個以後的 session 保持安靜，清單有變才再響。
 # ponytail: 兩個 session 同時開有極小機率各響一次。加鎖不值得，最壞多看一遍。
