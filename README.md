@@ -2,25 +2,16 @@
 
 Chen Chia Yang 的 Claude Code plugin marketplace。
 
-## 安裝
-
 ```
 /plugin marketplace add Unayung/claude-plugins
 /plugin install doorbell@unayung
 ```
 
-## doorbell
+---
+
+# doorbell
 
 告訴你**誰在等你**。
-
-**預設完全不作動**——開 session 時一行都不跑（實測 0.002s）。要開啟：
-
-```
-/doorbell watch
-```
-
-開一次就記住。之後每個新 session 都會自動把即時輪詢掛回來，不用重打。
-不想要了就 `/doorbell unwatch`。
 
 ```
 ## 有人在等你
@@ -37,103 +28,98 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 
 治本建議一併做：GitHub Settings → Notifications → Actions，取消勾選 workflow 通知。
 
-### 需求
+## 用法
+
+**預設完全不作動。** 裝了之後開 session 一行都不跑（實測 0.002 秒——旗標不在就在第一行退出，
+連 PATH 都不碰）。
+
+```
+/doorbell           列出當下誰在等你（隨時可用，不受開關影響）
+/doorbell watch     開啟。會記住，之後每個新 session 自動生效
+/doorbell unwatch   關掉，回到完全不作動
+```
+
+`watch` 開一次就好。之後每個新 session 的 SessionStart hook 會看到旗標，
+自動把即時輪詢掛回來，不用重打。
+
+## 需求
 
 `gh`（GitHub CLI）與 `jq`，且 `gh` 已登入。
 
 ```bash
-# 安裝 gh
 brew install gh              # macOS
 sudo pacman -S github-cli    # Arch
 sudo apt install gh          # Debian/Ubuntu
 # 其他平台：https://cli.github.com
 
-# 登入
 gh auth login
-
-# 確認
-gh auth status
+gh auth status               # 確認
 ```
 
-缺任何一項，doorbell **會在開 session 時明講缺什麼、該跑哪個指令**，不會安靜跳過，
-也不會擋住你開 session（所有 gh 呼叫都有硬性 timeout，最壞 13 秒）。
+開啟後若缺任何一項，doorbell 會**明講缺什麼、該跑哪個指令**，不會安靜跳過，
+也不會擋住你開 session——所有 `gh` 呼叫都有硬性 timeout，最壞 13 秒。
+（沒授權時 `gh` 會等互動輸入，實測能卡滿兩分鐘，所以這個 timeout 是必要的。）
 
-`gh` 裝在非標準路徑（asdf/mise shim 之類）的話，doorbell 已經預先把
-`~/.local/bin`、`~/bin`、`/opt/homebrew/bin` 加進 PATH；還是找不到就自己補。
+`gh` 裝在非標準路徑（asdf/mise shim 之類）也沒關係，doorbell 已經預先把
+`~/.local/bin`、`~/bin`、`/opt/homebrew/bin` 加進 PATH。
 
-### 同一份清單只講一次
+## 開多個 session 不會被吵兩次
 
-開第二、第三個 session 不會再重複同一份清單。doorbell 記住上次講過的內容雜湊，
-只有清單真的變了（有新的進來、或你標了已讀）才再響。
+三層各管各的：
 
-用內容雜湊而不是「N 分鐘內不重複」，是因為前者不需要調一個魔術數字，
-而且隔天早上打開時如果 backlog 沒變，本來也不需要再被提醒一次。
+| 情況 | 機制 |
+|---|---|
+| 同一份 backlog 在多個 session 重複出現 | 內容雜湊——一樣就不講 |
+| 多個 session 同時輪詢同一個 API | `flock`——只有一個真的打 API |
+| 處理完的通知還一直冒出來 | `gh api -X PATCH /notifications/threads/<id>` |
 
-狀態存在 `~/.local/state/doorbell/last-signature`（尊重 `XDG_STATE_HOME`）。
-想強制再看一次就刪掉它，或直接用 `/doorbell`——skill 是直接查，不受這個影響。
+雜湊用內容而不是「N 分鐘內不重複」，是因為前者不需要調魔術數字，而且隔天早上打開時
+backlog 沒變本來也不該再提醒一次。
 
-### `/doorbell` skill
+`flock` 用阻塞版而不是 `-n || exit`：其餘 session 安靜等在鎖上，持鎖那個一關就立刻接手，
+沒有空窗。鎖綁在 fd 上，`kill -9` 或當機都自動釋放，不會留 stale lock。
 
-hook 只在開 session 時查一次。session 中途要重查、或要掛即時推播，用 skill：
+## 狀態
 
-```
-/doorbell           列出當下誰在等你（隨時可用）
-/doorbell watch     開啟即時輪詢，並記住設定
-/doorbell unwatch   關掉，回到完全不作動
-```
+`${XDG_STATE_HOME:-~/.local/state}/doorbell/`
 
-`watch` 的輪詢迴圈用 `flock` 保護，在幾個 session 裡 arm 都無所謂——同時只有一個
-會真的打 API，其餘安靜等在鎖上，持鎖那個一關就立刻接手。所以不會有「兩個 session
-都提示我同一則 mention」的問題。
+| 檔案 | 用途 |
+|---|---|
+| `watch-enabled` | 開關旗標。不存在 = 完全不作動 |
+| `last-signature` | 上次講過的清單雜湊。刪掉可強制再看一次 |
+| `poller.lock` | flock 用 |
 
-skill 裡也寫了標已讀和認領任務的正確做法（含多人同時認領的 read-back）。
+---
 
-### 想要即時推播？
+## 附錄：寫 SessionStart hook 的兩個坑
 
-doorbell 只在開 session 時查一次（pull）。要在工作中被通知，自己 arm 一個 Monitor
-輪詢同一個 API——但**只在一個 session arm**，每個 session 都 arm 只會拿到 N 份重複通知。
-
-```bash
-last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-while true; do
-  gh api "/notifications?since=$last&all=false&per_page=50" --jq \
-    '.[]|select(.reason|IN("review_requested","assign","mention","team_mention","author"))
-      |"[\(.reason)] \(.repository.full_name) — \(.subject.title)"' \
-    || echo "⚠️ gh notifications 失敗"
-  last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  sleep 60
-done
-```
-
-處理完記得標已讀，訊號才會從清單消失：
-
-```bash
-gh api -X PATCH /notifications/threads/<thread_id>
-```
-
-## License
-
-MIT
-
-## 寫 SessionStart hook 的兩個坑
-
-做這支的時候各花了好幾輪才找到，都是「看起來像沒安裝」的靜默失敗：
+做這支的時候各花了好幾輪，都是「看起來像沒安裝」的靜默失敗：
 
 **1. hook 不繼承你互動 shell 的 PATH。**
 `gh` 常裝在 `~/.local/bin`，hook 環境裡沒有那段，`command -v gh` 直接找不到。
-腳本開頭要自己補：
 
 ```bash
 export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:$PATH"
 ```
 
 **2. SessionStart hook 的純 stdout 不會顯示給使用者。**
-它只進模型 context。要讓人看到必須輸出 JSON 帶 `systemMessage`：
+它只進模型 context。給人看要 `systemMessage`，給模型看要 `hookSpecificOutput.additionalContext`：
 
 ```bash
-jq -nc --arg m "$msg" '{systemMessage:$m}'
+jq -nc --arg m "$msg" --arg c "$ctx" \
+  '{systemMessage:$m, hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$c}}'
 ```
 
-兩個坑疊在一起的症狀完全相同——開 session 什麼都沒有——而且跟「plugin 沒載入」也長得一樣。
-排查順序：`claude plugin list` / `details` 確認有註冊 → 腳本裡寫一行無條件的落地 log
-確認有沒有被執行 → 都有的話就是輸出格式問題。
+兩個坑疊在一起的症狀完全相同——開 session 什麼都沒有——而且跟「plugin 根本沒載入」也長得一樣。
+
+**排查順序**：
+1. `claude plugin list` / `claude plugin details <p>` — hook 有沒有被註冊
+2. 腳本裡寫一行**無條件的落地 log**（寫檔，不是 stdout）— 有沒有被執行
+3. 前兩項都過就是輸出格式問題
+
+另外別寫防禦性的 `|| exit 0`。缺依賴、沒登入、清單為空，每種都給不同訊息——
+hook 沒有錯誤回報管道，安靜失敗等於沒有線索。
+
+## License
+
+MIT
