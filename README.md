@@ -11,7 +11,16 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 
 ## doorbell
 
-開 session 時告訴你**誰在等你**。
+告訴你**誰在等你**。
+
+**預設完全不作動**——開 session 時一行都不跑（實測 0.002s）。要開啟：
+
+```
+/doorbell watch
+```
+
+開一次就記住。之後每個新 session 都會自動把即時輪詢掛回來，不用重打。
+不想要了就 `/doorbell unwatch`。
 
 ```
 ## 有人在等你
@@ -68,8 +77,9 @@ gh auth status
 hook 只在開 session 時查一次。session 中途要重查、或要掛即時推播，用 skill：
 
 ```
-/doorbell           列出當下誰在等你
-/doorbell watch     掛一個 Monitor 持續輪詢
+/doorbell           列出當下誰在等你（隨時可用）
+/doorbell watch     開啟即時輪詢，並記住設定
+/doorbell unwatch   關掉，回到完全不作動
 ```
 
 `watch` 的輪詢迴圈用 `flock` 保護，在幾個 session 裡 arm 都無所謂——同時只有一個

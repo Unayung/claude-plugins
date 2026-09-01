@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# doorbell — 誰按過門鈴。SessionStart 時列出 GitHub 上真的有人在等你的事。
+# doorbell — 誰按過門鈴。
+#
+# 預設完全不作動。要開：/doorbell watch（寫旗標，之後每個 session 自動生效）。
 #
 # 兩個「靜默失敗」的坑，別再踩：
 #   1. hook 不繼承登入 shell 的 PATH，gh 常在 ~/.local/bin → 下面補 PATH
 #   2. SessionStart hook 的純 stdout 只進模型 context，使用者看不到
-#      → 必須輸出 JSON 帶 systemMessage
-# ponytail: 只做 pull。要即時推播用 /doorbell watch，而且只在一個 session 掛。
+#      → 給人看要 systemMessage，給模型看要 hookSpecificOutput.additionalContext
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/doorbell"
+
+# ── opt-in 閘門：沒開就零成本退出，連 PATH 都不用碰 ──────────────────
+[ -e "$STATE_DIR/watch-enabled" ] || exit 0
 
 export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:$PATH"
-
 # 沒授權時 gh 會等互動輸入；hook 卡住 = 每次開 session 都要等 timeout
 export GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
 # 最壞情況 10+3=13s，壓在 hooks.json 的 20s 預算內
@@ -17,13 +22,10 @@ GH_QUICK() { timeout 3 gh "$@"; }
 
 emit() { jq -nc --arg m "$1" '{systemMessage:$m}'; }
 
-if ! command -v jq >/dev/null; then
-  echo "🔔 doorbell 需要 jq：brew install jq ／ sudo pacman -S jq ／ sudo apt install jq"
-  exit 0
-fi
+command -v jq >/dev/null || {
+  echo "🔔 doorbell 需要 jq：brew install jq ／ sudo pacman -S jq ／ sudo apt install jq"; exit 0; }
 
-if ! command -v gh >/dev/null; then
-  emit "$(cat <<'MSG'
+command -v gh >/dev/null || { emit "$(cat <<'MSG'
 🔔 doorbell 需要 GitHub CLI，目前 PATH 裡找不到。
 
   安裝    macOS   brew install gh
@@ -35,17 +37,13 @@ if ! command -v gh >/dev/null; then
 
 裝在非標準路徑的話（例如 asdf/mise shim），把它加進 PATH 再重開 session。
 MSG
-)"
-  exit 0
-fi
+)"; exit 0; }
 
 REASONS='["review_requested","assign","mention","team_mention","author"]'
 
 if ! out=$(GH api "/notifications?all=false&per_page=100" --paginate --jq \
   ".[]|select(.reason|IN(${REASONS}[]))
    |\"- [\(.reason)] \(.repository.full_name) — \(.subject.title)\"" 2>&1); then
-
-  # 只有在失敗時才多跑一次 auth 檢查，區分「沒登入」和「其他錯誤」
   if ! GH_QUICK auth status >/dev/null 2>&1; then
     emit "🔔 doorbell：gh 尚未登入。跑 \`gh auth login\` 授權後重開 session。"
   else
@@ -54,16 +52,26 @@ if ! out=$(GH api "/notifications?all=false&per_page=100" --paginate --jq \
   exit 0
 fi
 
-[ -n "$out" ] || exit 0
+# 告訴模型把即時輪詢掛起來——這是 watch 能跨 session 持續的關鍵
+ARM_HINT='doorbell watch 已啟用。請立刻用 Monitor 工具掛上即時輪詢（persistent: true，
+description "doorbell：有人在等你"），command 用 doorbell skill 裡 `watch` 那段
+（含 flock，多 session 同時掛也只有一個會真的打 API）。已經掛著就不要重複掛。'
 
-# 同一份清單只講一次：第二個以後的 session 保持安靜，清單有變（新的來了、
-# 或你標了已讀）才再響。用內容雜湊而不是時間窗，免得要調一個魔術數字。
-# ponytail: 兩個 session 同時開有極小機率都讀到舊值而各響一次。加鎖不值得，
-#           最壞就是偶爾多看一遍。
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/last-signature"
-sig=$(printf '%s' "$out" | sha256sum | cut -d' ' -f1)
-[ -r "$STATE" ] && [ "$(cat "$STATE")" = "$sig" ] && exit 0
-mkdir -p "${STATE%/*}" && printf '%s' "$sig" > "$STATE"
+# 同一份清單只講一次：第二個以後的 session 保持安靜，清單有變才再響。
+# ponytail: 兩個 session 同時開有極小機率各響一次。加鎖不值得，最壞多看一遍。
+if [ -n "$out" ]; then
+  sig=$(printf '%s' "$out" | sha256sum | cut -d' ' -f1)
+  if [ -r "$STATE_DIR/last-signature" ] && [ "$(cat "$STATE_DIR/last-signature")" = "$sig" ]; then
+    msg=""
+  else
+    mkdir -p "$STATE_DIR" && printf '%s' "$sig" > "$STATE_DIR/last-signature"
+    msg=$(printf '有人在等你\n%s' "$out")
+  fi
+else
+  msg=""
+fi
 
-emit "$(printf '有人在等你\n%s' "$out")"
+jq -nc --arg m "$msg" --arg c "$ARM_HINT" \
+  '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$c}}
+   + (if $m == "" then {} else {systemMessage:$m} end)'
 exit 0

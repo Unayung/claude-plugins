@@ -1,14 +1,19 @@
 ---
 name: doorbell
-description: 查看或持續監看誰在等你 —— GitHub 上 request review / assign / mention / 你自己 PR 的新回覆。用在使用者說「誰在等我」「有什麼要 review」「盯著收件匣」「/doorbell」時。預設列出當下清單；帶 watch 會掛一個持續輪詢的 Monitor。
+description: 查看或持續監看誰在等你 —— GitHub 上 request review / assign / mention / 你自己 PR 的新回覆。用在使用者說「誰在等我」「有什麼要 review」「盯著收件匣」「/doorbell」時。預設列出當下清單；watch 會開啟即時輪詢並記住設定；unwatch 關掉。
 ---
 
 # doorbell
 
-doorbell 的 SessionStart hook 只在開 session 時查一次。這個 skill 補兩件 hook 做不到的事：
-session 中途重查，以及即時推播。
+doorbell 的 SessionStart hook **預設完全不作動**。要開啟得 opt in，開一次就記住。
+
+狀態目錄：`${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/`
+- `watch-enabled` — 旗標檔。存在 = hook 會作動並要求掛輪詢
+- `last-signature` — 上次講過的清單雜湊，用來避免多個 session 重複提示
 
 ## 預設：現在列出來
+
+不管旗標開沒開，明確呼叫一律直接查並回答。
 
 ```bash
 gh api "/notifications?all=false&per_page=100" --paginate --jq \
@@ -16,18 +21,23 @@ gh api "/notifications?all=false&per_page=100" --paginate --jq \
     |"- [\(.reason)] \(.repository.full_name) — \(.subject.title)\n  \(.subject.url)"'
 ```
 
-`subject.url` 是 API 網址，要給使用者點的連結用 `gh pr view <n> -R <repo> --web` 或把
-`api.github.com/repos/X/pulls/N` 轉成 `github.com/X/pull/N`。
+`subject.url` 是 API 網址。要給人點的連結把 `api.github.com/repos/X/pulls/N`
+轉成 `github.com/X/pull/N`，或用 `gh pr view <n> -R <repo> --web`。
 
 清單空的就直接說沒有，不要編。
 
-## `watch`：掛即時推播
+## `watch`：開啟即時輪詢（會記住）
 
-使用者說「盯著」「watch」「有人找我就告訴我」時，用 Monitor 工具：
+```bash
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell"
+touch "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/watch-enabled"
+```
+
+然後**立刻**用 Monitor 工具掛上（不要只寫旗標就結束，這個 session 也要生效）：
 
 ```
 Monitor({
-  command: '<下面那段輪詢迴圈>',
+  command: '<下面那段>',
   description: 'doorbell：有人在等你',
   persistent: true
 })
@@ -51,13 +61,23 @@ while true; do
 done
 ```
 
-arm 之前先建目錄：`mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell"`。
+在幾個 session arm 都無所謂，flock 保證只有一個真的打 API。
+GitHub 的 `X-Poll-Interval` 下限是 60 秒，別調更短。
 
-上面的 `flock` 讓「只在一個 session arm」變成強制而不是建議——在幾個 session 裡
-arm 都無所謂，只有一個會真的輪詢。GitHub 的 `X-Poll-Interval` 下限是 60 秒，別調更短。
-
-**注意**：接手的可能是你三天前開著沒關的 session，通知會跑到你沒在看的視窗。
+**注意**：接手的可能是使用者三天前開著沒關的 session，通知會跑到他沒在看的視窗。
 真的困擾就 TaskStop 掉再在想要的 session 重 arm。
+
+之後每個新 session 的 hook 會看到旗標，在 `additionalContext` 裡要求把輪詢掛回來——
+所以使用者只需要 opt in 一次。
+
+## `unwatch` / `stop`：關掉
+
+```bash
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/watch-enabled"
+```
+
+同時用 TaskStop 停掉這個 session 正在跑的 doorbell Monitor（如果有）。
+之後的 session 就完全不作動。
 
 ## 處理完要標已讀
 
