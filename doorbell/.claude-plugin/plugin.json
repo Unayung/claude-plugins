@@ -1,0 +1,9 @@
+{
+  "name": "doorbell",
+  "version": "0.1.0",
+  "description": "開 session 時告訴你誰在等你 — 從 GitHub 通知裡撈出真的有人找你的事，濾掉 CI 噪音",
+  "author": { "name": "Chen Chia Yang" },
+  "repository": "https://github.com/Unayung/claude-plugins",
+  "license": "MIT",
+  "keywords": ["github", "notifications", "inbox", "hooks"]
+}

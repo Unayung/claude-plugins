@@ -1,0 +1,11 @@
+{
+  "name": "unayung",
+  "owner": { "name": "Chen Chia Yang", "url": "https://github.com/Unayung" },
+  "plugins": [
+    {
+      "name": "doorbell",
+      "source": "./doorbell",
+      "description": "開 session 時告訴你誰在等你 — GitHub 收件匣，濾掉 CI 噪音"
+    }
+  ]
+}
