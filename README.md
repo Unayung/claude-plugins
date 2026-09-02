@@ -14,10 +14,9 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 告訴你**誰在等你**。
 
 ```
-## 有人在等你
-- [review_requested] acme/api — feat: add rate limiting to public endpoints
-- [mention] acme/web — 這段要不要抽成 hook？
-- [author] acme/api — fix: retry on 502 from upstream
+🔔 [review_requested] acme/api — feat: add rate limiting to public endpoints
+🔔 [mention] acme/web — 這段要不要抽成 hook？
+🔔 [author] acme/api — fix: retry on 502 from upstream
 ```
 
 它讀 GitHub 的未讀通知，只留下真的有人找你的那幾種：
@@ -30,33 +29,33 @@ Chen Chia Yang 的 Claude Code plugin marketplace。
 
 ## 用法
 
-**預設完全不作動。** 裝了之後開 session 一行都不跑（實測 0.002 秒——旗標不在就在第一行退出，
-連 PATH 都不碰）。
-
 ```
-/doorbell           列出當下誰在等你（隨時可用，不受開關影響）
-/doorbell watch     開啟即時輪詢，60 秒一次
-/doorbell unwatch   關掉，回到完全不作動
+/doorbell           列出當下誰在等你
+/doorbell watch     在這個 session 掛上即時輪詢（60 秒一次）
+/doorbell unwatch   關掉
 ```
 
-`watch` 開一次就好。之後每個新 session 的 SessionStart hook 會看到旗標，
-自動把即時輪詢掛回來，不用重打。
+**doorbell 只在你叫它的那個 session 作動。** 沒有 hook、沒有旗標檔、沒有任何跨 session
+狀態，所以開再多 Claude Code 也不會有 doorbell 自己冒出來。session 關掉輪詢就沒了，
+下次要監看再打一次。
 
-### 間隔為什麼固定 60 秒
+## singleton：全機只准一個在輪詢
 
-曾經做成可調，量完之後拿掉了。2026-09-01 實測 `/notifications` 回應標頭：
+第二個 session 打 `/doorbell watch` 會**被拒絕並說明**，不會偷偷排隊。
 
+鎖在 `${XDG_STATE_HOME:-~/.local/state}/doorbell/poller.lock`，綁在 fd 上，
+`kill -9`、當機、斷電都自動釋放，不會留 stale lock。
+
+想換一個 session 收通知，明確接管：
+
+```bash
+fuser -k "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
+# 然後在想要的 session 打 /doorbell watch
 ```
-X-Poll-Interval: 60
-Cache-Control:   private, max-age=60, s-maxage=60   ← 資料宣告 60 秒內 fresh
-X-Ratelimit-Remaining 每次 -1                        ← gh api 不送 conditional request
-```
 
-調成 15 秒的實際效果是三次拿到同一份快取、延遲沒改善、額度花 4 倍。真正的延遲
-瓶頸在 GitHub 端產生通知那段，不在輪詢間隔。一個量不出差別的旋鈕留著只會誤導人。
-
-真要更低延遲得換機制——GitHub webhook 是 push 的，沒有輪詢週期，但那需要一個
-GitHub 打得到的端點。60 秒輪詢就是不架 server 的代價。
+早期版本用阻塞式 `flock`，多餘的 poller 會排隊等著。那是假的 singleton——同時
+只有一個在打 API，但前一個死掉時會**無聲接管**，你不知道現在是哪個視窗在收。
+改成 `flock -n` 直接拒絕，寧可要明確也不要方便。
 
 ## 需求
 
@@ -72,44 +71,42 @@ gh auth login
 gh auth status               # 確認
 ```
 
-開啟後若缺任何一項，doorbell 會**明講缺什麼、該跑哪個指令**，不會安靜跳過，
-也不會擋住你開 session——所有 `gh` 呼叫都有硬性 timeout，最壞 13 秒。
-（沒授權時 `gh` 會等互動輸入，實測能卡滿兩分鐘，所以這個 timeout 是必要的。）
-
 `gh` 裝在非標準路徑（asdf/mise shim 之類）也沒關係，doorbell 已經預先把
 `~/.local/bin`、`~/bin`、`/opt/homebrew/bin` 加進 PATH。
 
-## 開多個 session 不會被吵兩次
+## 間隔為什麼固定 60 秒
 
-三層各管各的：
+曾經做成可調，量完之後拿掉了。2026-09-01 實測 `/notifications` 回應標頭：
 
-| 情況 | 機制 |
-|---|---|
-| 同一份 backlog 在多個 session 重複出現 | 內容雜湊——一樣就不講 |
-| 多個 session 同時輪詢同一個 API | `flock`——只有一個真的打 API |
-| 處理完的通知還一直冒出來 | `gh api -X PATCH /notifications/threads/<id>` |
+```
+X-Poll-Interval: 60
+Cache-Control:   private, max-age=60, s-maxage=60   ← 資料宣告 60 秒內 fresh
+X-Ratelimit-Remaining 每次 -1                        ← gh api 不送 conditional request
+```
 
-雜湊用內容而不是「N 分鐘內不重複」，是因為前者不需要調魔術數字，而且隔天早上打開時
-backlog 沒變本來也不該再提醒一次。
+調成 15 秒的實際效果是三次拿到同一份快取、延遲沒改善、額度花 4 倍。真正的延遲
+瓶頸在 GitHub 端產生通知那段，不在輪詢間隔。一個量不出差別的旋鈕留著只會誤導人。
 
-`flock` 用阻塞版而不是 `-n || exit`：其餘 session 安靜等在鎖上，持鎖那個一關就立刻接手，
-沒有空窗。鎖綁在 fd 上，`kill -9` 或當機都自動釋放，不會留 stale lock。
+真要更低延遲得換機制——GitHub webhook 是 push 的，沒有輪詢週期，但那需要一個
+GitHub 打得到的端點。60 秒輪詢就是不架 server 的代價。
 
-## 狀態
+## 處理完記得標已讀
 
-`${XDG_STATE_HOME:-~/.local/state}/doorbell/`
+訊號要從清單消失才不會一直重複出現：
 
-| 檔案 | 用途 |
-|---|---|
-| `watch-enabled` | 開關旗標。不存在 = 完全不作動（內容不讀） |
-| `last-signature` | 上次講過的清單雜湊。刪掉可強制再看一次 |
-| `poller.lock` | flock 用 |
+```bash
+gh api -X PATCH /notifications/threads/<thread_id>
+```
+
+**不要**用 `PUT /notifications` 全標已讀，那會把還沒處理的一起蓋掉。
 
 ---
 
-## 附錄：寫 SessionStart hook 的兩個坑
+## 附錄：曾經用 SessionStart hook，這是當時踩到的兩個坑
 
-做這支的時候各花了好幾輪，都是「看起來像沒安裝」的靜默失敗：
+doorbell 早期版本有一個 SessionStart hook，會在開 session 時自動列出 backlog。
+後來為了 singleton 與「不要有東西自己冒出來」把它移除了（見 `ee9d014`）。
+但當時踩的兩個坑對任何要寫 hook 的人都還適用，留在這裡：
 
 **1. hook 不繼承你互動 shell 的 PATH。**
 `gh` 常裝在 `~/.local/bin`，hook 環境裡沒有那段，`command -v gh` 直接找不到。
@@ -134,7 +131,8 @@ jq -nc --arg m "$msg" --arg c "$ctx" \
 3. 前兩項都過就是輸出格式問題
 
 另外別寫防禦性的 `|| exit 0`。缺依賴、沒登入、清單為空，每種都給不同訊息——
-hook 沒有錯誤回報管道，安靜失敗等於沒有線索。
+hook 沒有錯誤回報管道，安靜失敗等於沒有線索。同理 `[ -n "$x" ] && do_thing`：
+條件不成立時什麼都不會發生，而「什麼都沒發生」看起來跟成功一樣。
 
 ## License
 

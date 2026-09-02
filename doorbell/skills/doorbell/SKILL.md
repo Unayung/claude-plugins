@@ -1,12 +1,14 @@
 ---
 name: doorbell
-description: 查看或持續監看誰在等你 —— GitHub 上 request review / assign / mention / 你自己 PR 的新回覆。用在使用者說「誰在等我」「有什麼要 review」「盯著收件匣」「/doorbell」時。預設列出當下清單；watch 在這個 session 掛上即時輪詢；unwatch 關掉。
+description: 查看或持續監看誰在等你 —— GitHub 上 request review / assign / mention / 你自己 PR 的新回覆。用在使用者說「誰在等我」「有什麼要 review」「盯著收件匣」「/doorbell」時。預設列出當下清單；watch 在這個 session 掛上即時輪詢（全機只准一個）；unwatch 關掉。
 ---
 
 # doorbell
 
 doorbell **只在被呼叫的 session 作動**，不留任何跨 session 狀態：沒有 hook、
 沒有旗標檔，也不會自己在新 session 掛回來。要監看就在那個 session 打 `/doorbell watch`。
+
+**全機同時只准一個輪詢在跑。** 見下方 singleton 一節。
 
 ## 預設：現在列出來
 
@@ -28,12 +30,30 @@ gh api "/notifications?all=false&per_page=100" --paginate --jq \
 只影響當下這個 session。關掉視窗、session 結束，輪詢就跟著沒了——
 下次要監看再打一次 `/doorbell watch`。
 
-**間隔固定 60 秒，不要做成可調。** 2026-09-01 實測 `/notifications` 回應標頭：
-`Cache-Control: private, max-age=60`（資料宣告 60 秒內 fresh）、`X-Poll-Interval: 60`、
-且 `gh api` 不送 conditional request 所以每次實扣額度。調更短只會拿到同一份快取、
-延遲不變、額度多花數倍。使用者要求調快就把這段講給他聽。
+### 先檢查有沒有別的在跑
 
-用 Monitor 工具掛上：
+arm 之前先探一次，這樣能直接告訴使用者狀況，而不是掛一個馬上自己退出的 Monitor：
+
+```bash
+LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
+mkdir -p "${LOCK%/*}"
+if ( exec 9>"$LOCK"; flock -n 9 ); then
+  echo "沒有其他 doorbell 在跑，可以 arm"
+else
+  echo "已有 doorbell 在別的 session 跑"
+fi
+```
+
+**已經有的話就不要 arm**，把狀況講給使用者聽，並告訴他接管的方式（見下方 singleton）。
+
+### 間隔固定 60 秒，不要做成可調
+
+2026-09-01 實測 `/notifications` 回應標頭：`Cache-Control: private, max-age=60`
+（資料宣告 60 秒內 fresh）、`X-Poll-Interval: 60`，且 `gh api` 不送 conditional
+request 所以每次實扣額度。調更短只會拿到同一份快取、延遲不變、額度多花數倍。
+使用者要求調快就把這段講給他聽。
+
+### arm
 
 ```
 Monitor({
@@ -44,11 +64,18 @@ Monitor({
 ```
 
 ```bash
-# flock：同時只有一個 session 真的在輪詢。其餘的安靜卡在鎖上（kernel wait，
-# 不吃 CPU、不發事件），持鎖那個一關就立刻接手，沒有空窗。
-# 鎖綁在 fd 上，process 被 kill -9 或當機也會自動釋放，不會留 stale lock。
-exec 9>"${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
-flock 9
+LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
+mkdir -p "${LOCK%/*}"
+exec 9>"$LOCK"
+
+# singleton：拿不到鎖就直接退出，不排隊。
+# 用 -n 而不是阻塞版是刻意的——阻塞會讓多餘的 poller 埋伏著，前一個死掉就
+# 無聲接管，使用者無從知道現在是哪個 session 在收通知。
+flock -n 9 || {
+  echo "🔔 doorbell 已在另一個 session 執行，這裡不啟動。"
+  echo "   要把它接管過來：fuser -k \"$LOCK\" 之後在這裡重打 /doorbell watch"
+  exit 0
+}
 
 export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:$PATH"
 export GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
@@ -84,15 +111,26 @@ while true; do
 done
 ```
 
+## singleton：全機只准一個
 
-在幾個 session arm 都無所謂，flock 保證只有一個真的打 API。
+鎖是 `${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock`，綁在 fd 上，
+所以 process 被 `kill -9`、當機、斷電都會自動釋放，不會留 stale lock。
 
-**注意**：接手的可能是使用者三天前開著沒關的 session，通知會跑到他沒在看的視窗。
-真的困擾就 TaskStop 掉再在想要的 session 重 arm。
+- 第二個 session 打 `/doorbell watch` → **拒絕啟動並說明**，不排隊、不埋伏
+- 想換到別的 session 收通知 → 明確接管，兩步：
+
+```bash
+fuser -k "${XDG_STATE_HOME:-$HOME/.local/state}/doorbell/poller.lock"
+# 然後在想要的 session 打 /doorbell watch
+```
+
+沒有 hook、沒有旗標檔，所以開再多 session 都不會有 doorbell 自己冒出來。
 
 ## `unwatch` / `stop`：關掉
 
 用 TaskStop 停掉這個 session 的 doorbell Monitor。沒有別的狀態要清。
+
+不在這個 session 的話用 `fuser -k` 那行。
 
 ## 處理完要標已讀
 
