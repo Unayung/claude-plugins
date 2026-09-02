@@ -117,7 +117,12 @@ while true; do
       echo "⚠️ doorbell: 取不到回應的 Date 標頭，since 未前進（仍為 $since）"
     fi
   else
-    echo "⚠️ doorbell: gh notifications 失敗，保留 since=$since 下輪重查"
+    rc=$?
+    # 一定要把實際錯誤帶出來。只印「失敗了」等於逼下一個人從外面猜，而外面
+    # 什麼都重現不出來——2026-09-02 為此連查了六輪環境、額度、fd、mktemp 全是好的。
+    echo "⚠️ doorbell: gh notifications 失敗（exit=$rc），保留 since=$since 下輪重查"
+    head -c 400 "$resp" 2>/dev/null | tr '\n' ' ' | sed 's/^/   └ /'
+    echo
   fi
   rm -f "$resp"
   sleep 60
