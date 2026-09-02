@@ -25,6 +25,10 @@ gh api "/notifications?all=false&per_page=100" --paginate --jq \
 
 清單空的就直接說沒有，不要編。
 
+**這裡刻意不套 `watch` 的 author 過濾。** watch 是推播、重精確（不吵人）；
+這裡是使用者主動問、重召回（不漏）。兩條路不對稱是設計，不是遺漏——
+watch 那道過濾在「留言之後緊接著有 push」時會蓋掉那則留言，用這個指令補得回來。
+
 ## `watch`：在這個 session 掛上即時輪詢
 
 只影響當下這個 session。關掉視窗、session 結束，輪詢就跟著沒了——
@@ -90,8 +94,17 @@ since=$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)
 while true; do
   resp=$(mktemp)
   if timeout 30 gh api -i "/notifications?since=$since&all=false&per_page=50" > "$resp" 2>&1; then
+    # author 這一類要多一道：`latest_comment_url` 等於 subject.url 代表最後動作
+    # 不是留言（merge / push / CI 狀態），純噪音。實測未讀 24 筆裡 22 筆是這種。
+    #
+    # ⚠️ 不要再加「跳過 bot 帳號」那一層。codex-review / post-review 都是
+    # github-actions[bot]，而它們貼的是 P1 findings —— 2026-09-02 差點把兩個
+    # P1（清空工具綁定、缺 confirm 的破壞性頻道解綁）濾掉。降噪要看內容不看來源。
     awk 'f{print} /^\r?$/{f=1}' "$resp" \
       | jq -r ".[]|select(.reason|IN(${REASONS}[]))
+               |select(.reason != \"author\"
+                       or (.subject.latest_comment_url != null
+                           and .subject.latest_comment_url != .subject.url))
                |\"🔔 [\(.reason)] \(.repository.full_name) — \(.subject.title)\""
     # 只有成功才推進 since。失敗就保留原值，下一輪重查同一個區間，不會漏。
     # 用 sed 不用 grep：某些環境的 grep 對 -im1 這種合併短選項會炸
