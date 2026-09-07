@@ -1,0 +1,9 @@
+{
+  "name": "sfc-rom-zh",
+  "version": "0.1.0",
+  "description": "把 SFC ROM 繁中化 — 動手寫扣之前要先找到什麼、哪一種驗證才擋得住無聲損壞，以及實際踩過的失敗模式",
+  "author": { "name": "Chen Chia Yang" },
+  "repository": "https://github.com/Unayung/claude-plugins",
+  "license": "MIT",
+  "keywords": ["rom-hacking", "snes", "sfc", "translation", "traditional-chinese"]
+}

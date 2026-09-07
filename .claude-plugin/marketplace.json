@@ -6,6 +6,11 @@
       "name": "doorbell",
       "source": "./doorbell",
       "description": "誰在等你 — GitHub 收件匣，濾掉 CI 噪音。/doorbell 呼叫才作動"
+    },
+    {
+      "name": "sfc-rom-zh",
+      "source": "./sfc-rom-zh",
+      "description": "把 SFC ROM 繁中化 — 先找什麼、怎麼驗、踩過哪些無聲損壞"
     }
   ]
 }
